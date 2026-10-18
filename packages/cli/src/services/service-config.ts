@@ -1,6 +1,7 @@
 import { Global } from "@opencode/util/global"
 import { OPENCODE_CHANNEL, OPENCODE_VERSION } from "../version"
 import { Hash } from "@opencode/util/hash"
+import { Identity } from "@opencode/util/identity"
 import { Service } from "@opencode/client/effect/service"
 import { Effect, FileSystem, Option, Schema } from "effect"
 import { randomBytes } from "crypto"
@@ -39,11 +40,17 @@ const decodeLegacy = Schema.decodeUnknownOption(
 const decodeRegistration = Schema.decodeUnknownEffect(Schema.fromJsonString(Service.Info))
 
 export function filename(channel = OPENCODE_CHANNEL) {
-  if (channel === "latest" || channel === "dev" || channel === "beta" || channel === "next") return "service.json"
-  return `service-${channel.replace(/[^a-zA-Z0-9._-]/g, "-")}.json`
+  const name =
+    channel === "latest" || channel === "dev" || channel === "beta" || channel === "next"
+      ? "service"
+      : `service-${channel.replace(/[^a-zA-Z0-9._-]/g, "-")}`
+  return `${name}${Identity.chatcode ? "-cco" : ""}.json`
 }
 
 export function defaultPort(channel = OPENCODE_CHANNEL) {
+  // The chatcode identity owns one private port, clear of the upstream defaults and the
+  // channel-derived 10000-59999 range, so both identities' services run side by side.
+  if (Identity.chatcode) return 0xf0de
   if (channel === "latest" || channel === "dev" || channel === "beta" || channel === "next") return 0xc0de
   if (channel === "local") return 0xc0df
   return 10_000 + (Number.parseInt(Hash.fast(channel).slice(0, 8), 16) % 50_000)
@@ -107,16 +114,20 @@ const paths = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
   const global = yield* Global.Service
   const name = filename()
-  const legacy = legacyFilename()
+  // The chatcode identity never adopts another identity's registration or config, so both the
+  // legacy-channel and the service.json registration copies stay default-mode only.
+  const legacy = Identity.chatcode ? undefined : legacyFilename()
   const file = path.join(global.state, name)
   return {
     fs,
     file,
     legacyConfigFile: legacy ? path.join(global.config, legacy) : undefined,
-    legacyRegistrationFiles: [
-      ...(legacy ? [path.join(global.state, legacy)] : []),
-      ...(name !== "service.json" && OPENCODE_CHANNEL !== "local" ? [path.join(global.state, "service.json")] : []),
-    ],
+    legacyRegistrationFiles: Identity.chatcode
+      ? []
+      : [
+          ...(legacy ? [path.join(global.state, legacy)] : []),
+          ...(name !== "service.json" && OPENCODE_CHANNEL !== "local" ? [path.join(global.state, "service.json")] : []),
+        ],
     configFile: path.join(global.config, name),
   }
 })
@@ -124,10 +135,14 @@ const paths = Effect.gen(function* () {
 export const options = Effect.fnUntraced(function* (input: { readonly checkVersion?: boolean } = {}) {
   const { file, legacyRegistrationFiles } = yield* paths
   yield* Effect.forEach(legacyRegistrationFiles, (legacy) => migrateRegistration(legacy, file))
+  const env = (yield* read()).env
   return {
     file,
     version: input.checkVersion ? OPENCODE_VERSION : undefined,
-    env: (yield* read()).env,
+    // A chatcode client started only via argv (opencode-cco symlink) has no OPENCODE_IDENTITY in
+    // process.env; carry it in the spawn env so the service child inherits the identity. Merged
+    // after user env so `service set env` cannot shadow it.
+    env: Identity.chatcode ? { ...env, OPENCODE_IDENTITY: Identity.CHATCODE } : env,
     command: [
       ...selfCommand(),
       "serve",

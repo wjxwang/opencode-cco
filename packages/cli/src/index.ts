@@ -2,6 +2,7 @@
 
 import { ensurePluginRuntime } from "@opencode/plugin/runtime"
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import { writeFileSync } from "node:fs"
 import { Cause, Effect } from "effect"
 import { getErrorReported } from "effect/Runtime"
 import { Commands } from "./commands/commands"
@@ -11,6 +12,7 @@ import { Updater } from "./services/updater"
 import { OPENCODE_ARTIFACT, OPENCODE_CHANNEL, OPENCODE_LOCAL, OPENCODE_VERSION } from "./version"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Global } from "@opencode/util/global"
+import { Identity } from "@opencode/util/identity"
 import { AppProcess } from "@opencode/util/process"
 import { Config } from "./config"
 import { Npm } from "@opencode/util/npm"
@@ -19,6 +21,18 @@ import { Heap } from "./heap"
 import { CpuProfile } from "./cpu-profile"
 
 ensurePluginRuntime()
+
+// Only the chatcode identity renames the process; the default product keeps the upstream argv.
+if (Identity.chatcode) {
+  process.title = Identity.CHATCODE
+  // Bun's process.title only stores the property, so Linux renames the kernel-visible process
+  // name directly; top/htop and `ps -o comm` then show chatcode-cli. Best-effort: a sandboxed
+  // /proc must not stop startup.
+  if (process.platform === "linux")
+    try {
+      writeFileSync("/proc/self/comm", Identity.CHATCODE)
+    } catch {}
+}
 
 if (process.env.OPENCODE_SSH_ASKPASS_PORT) {
   const { askpass } = await import("./ssh-askpass")

@@ -4,6 +4,7 @@ import { LLM, LLMClient, AIError } from "@opencode/ai"
 import { SessionID } from "@opencode/schema/session-id"
 import { Context, Effect, Layer, Schema } from "effect"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
+import { Identity } from "@opencode/util/identity"
 import { llmClient } from "./effect/app-node-platform.js"
 import { ModelResolver } from "./model-resolver.js"
 import { Model } from "./model.js"
@@ -29,6 +30,12 @@ export interface Interface {
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Generate") {}
+
+// Session attribution for a stateless call; the chatcode identity must not name the product in the header.
+export function attributionHeaders(chatcode = Identity.chatcode): Record<string, string> {
+  const id = SessionID.create()
+  return chatcode ? { "x-session-affinity": id } : { "x-opencode-session": id }
+}
 
 export const layer = Layer.effect(
   Service,
@@ -67,7 +74,7 @@ export const layer = Layer.effect(
             model: resolved.model,
             prompt: input.prompt,
             // Gateways require session attribution even for a stateless call; no Session is stored.
-            http: { headers: { "x-opencode-session": SessionID.create() } },
+            http: { headers: attributionHeaders() },
           }),
         )
         .pipe(

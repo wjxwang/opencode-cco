@@ -27,6 +27,39 @@ test("managed service ports are stable per installation channel", () => {
   expect(ServiceConfig.defaultPort("preview-a")).not.toBe(ServiceConfig.defaultPort("preview-b"))
 })
 
+test("default identity keeps upstream registration file names", () => {
+  expect(ServiceConfig.filename("latest")).toBe("service.json")
+  expect(ServiceConfig.filename("dev")).toBe("service.json")
+  expect(ServiceConfig.filename("local")).toBe("service-local.json")
+  expect(ServiceConfig.filename("preview-a")).toBe("service-preview-a.json")
+})
+
+// The chatcode predicate is cached at module load, so exercise it in a subprocess.
+test("chatcode identity gets its own registration file and port", () => {
+  const script =
+    'import { ServiceConfig } from "./src/services/service-config"; ' +
+    'console.log(JSON.stringify([' +
+    'ServiceConfig.filename("latest"), ServiceConfig.filename("local"), ServiceConfig.filename("preview-a"), ' +
+    'ServiceConfig.defaultPort("latest"), ServiceConfig.defaultPort("local"), ServiceConfig.defaultPort("preview-a")' +
+    "]))"
+  const result = Bun.spawnSync({
+    cmd: ["bun", "-e", script],
+    cwd: path.join(import.meta.dir, ".."),
+    env: { ...process.env, OPENCODE_IDENTITY: "chatcode-cli" },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  expect(result.exitCode).toBe(0)
+  expect(JSON.parse(result.stdout.toString())).toEqual([
+    "service-cco.json",
+    "service-local-cco.json",
+    "service-preview-a-cco.json",
+    0xf0de,
+    0xf0de,
+    0xf0de,
+  ])
+})
+
 test("service disabled accepts only booleans without changing configuration on invalid input", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-service-disabled-config-"))
   const layer = Global.layerWith({ config: path.join(root, "config"), state: path.join(root, "state") })

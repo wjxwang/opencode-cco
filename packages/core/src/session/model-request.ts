@@ -26,6 +26,7 @@ import type { Content } from "@opencode/schema/tool"
 import { Cause, Context, Effect, Layer, Result, Stream } from "effect"
 import { HttpClientRequest, HttpClientResponse } from "effect/http"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
+import { Identity } from "@opencode/util/identity"
 import { App } from "../app.js"
 import { Permission } from "../permission.js"
 import { PluginHooks } from "../plugin/hooks.js"
@@ -227,6 +228,29 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionModelRequest") {}
 
+// Chatcode identity sends only the neutral attribution headers: no x-opencode-* name and no client
+// identifier leaves the process; attribution rides on x-session-affinity / X-Session-Id / x-parent-session-id.
+export const outboundHeaders = (
+  session: Pick<SessionSchema.Info, "id" | "parentID" | "projectID">,
+  affinity: string,
+  app: App.Info,
+  chatcode = Identity.chatcode,
+) => {
+  const headers: Record<string, string> = {
+    "x-session-affinity": affinity,
+    "X-Session-Id": affinity,
+    "User-Agent": App.useragent(app, chatcode),
+  }
+  if (session.parentID) headers["x-parent-session-id"] = session.parentID
+  if (chatcode) return headers
+  headers["x-opencode-session-id"] = session.id
+  if (session.parentID) headers["x-opencode-parent-session-id"] = session.parentID
+  headers["x-opencode-project"] = session.projectID
+  headers["x-opencode-session"] = affinity
+  headers["x-opencode-client"] = app.name
+  return headers
+}
+
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -279,17 +303,7 @@ export const layer = Layer.effect(
       const base = LLM.request({
         model: model.model,
         http: {
-          headers: {
-            "x-opencode-session-id": session.id,
-            ...(session.parentID ? { "x-opencode-parent-session-id": session.parentID } : {}),
-            "x-session-affinity": affinity,
-            "X-Session-Id": affinity,
-            ...(session.parentID ? { "x-parent-session-id": session.parentID } : {}),
-            "User-Agent": App.useragent(app),
-            "x-opencode-project": session.projectID,
-            "x-opencode-session": affinity,
-            "x-opencode-client": app.name,
-          },
+          headers: outboundHeaders(session, affinity, app),
         },
         // TODO: Persist cache lineage so nested forks reuse the root session's cache key.
         promptCacheKey: /^ses_[0-9a-f]{64}$/.test(affinity) ? affinity.slice(4) : affinity,

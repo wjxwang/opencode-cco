@@ -6,6 +6,7 @@
   "license": "MIT",
   "bin": {
     "opencode": "./bin/opencode.cjs",
+    "opencode-cco": "./bin/opencode-cco.cjs",
     "opencode2": "./bin/opencode2.cjs"
   },
   "files": [

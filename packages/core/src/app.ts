@@ -2,6 +2,7 @@ export * as App from "./app.js"
 
 import { Context, Layer } from "effect"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
+import { Identity } from "@opencode/util/identity"
 
 export interface Info {
   readonly name: string
@@ -21,7 +22,9 @@ export function make(input: Partial<Info> = {}): Info {
   }
 }
 
-export function useragent(app: Info) {
+export function useragent(app: Info, chatcode = Identity.chatcode) {
+  // Literally the installed chatcode-cli identity: never derived from this repository's version.
+  if (chatcode) return "chatcode-cli/3.0.3 (+https://www.npmjs.com/package/@chatcode/chatcode-cli)"
   return `opencode/${app.channel}/${app.version}/${app.name}`
 }
 

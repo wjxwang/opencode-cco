@@ -1,4 +1,4 @@
-import { expect } from "bun:test"
+import { expect, test } from "bun:test"
 import { LanguageModel, LLMClient } from "@opencode/ai"
 import { RequestExecutor } from "@opencode/ai/route"
 import { OpenAIChat } from "@opencode/ai/protocols"
@@ -146,3 +146,12 @@ testEffect(Layer.empty).effect("attributes each stateless completion without cre
     expect(sessions[1]).not.toBe(sessions[0])
   }),
 )
+
+test("stateless attribution header name follows the identity", () => {
+  const chatcode = Generate.attributionHeaders(true)
+  expect(Object.keys(chatcode)).toEqual(["x-session-affinity"])
+  expect(chatcode["x-session-affinity"]).toStartWith("ses_")
+  const fallback = Generate.attributionHeaders(false)
+  expect(Object.keys(fallback)).toEqual(["x-opencode-session"])
+  expect(fallback["x-opencode-session"]).toStartWith("ses_")
+})

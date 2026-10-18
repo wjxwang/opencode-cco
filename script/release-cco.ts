@@ -113,11 +113,19 @@ if (values["dry-run"]) {
 }
 
 console.log(`\n=== tagging ${tag} ===\n`)
-const tagged = await $`git rev-parse -q --verify refs/tags/${tag}`.quiet().exitCode()
+const tagged = (await $`git rev-parse -q --verify refs/tags/${tag}`.quiet().nothrow()).exitCode
 if (tagged !== 0) {
   await $`git tag ${tag}`
 }
-await $`git -c http.extraheader=AUTHORIZATION: bearer ${token} push origin ${tag}`
+// GitHub's git endpoints reject Bearer PATs (401); only Basic works there.
+const pushAuth = `http.extraheader=AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`
+for (let attempt = 1; attempt <= 15; attempt++) {
+  const pushed = (await $`git -c ${pushAuth} push origin ${tag}`.nothrow()).exitCode
+  if (pushed === 0) break
+  if (attempt === 15) throw new Error(`Push tag ${tag} failed`)
+  console.error(`tag push attempt ${attempt} failed, retrying`)
+  await Bun.sleep(attempt * 4000)
+}
 
 console.log(`\n=== release ${tag} ===\n`)
 const api = `https://api.github.com/repos/${REPO}`
@@ -127,32 +135,19 @@ const headers = {
   "X-GitHub-Api-Version": "2022-11-28",
 }
 
-let release = await getRelease()
-if (!release) {
-  const created = await fetch(`${api}/releases`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      tag_name: tag,
-      name: tag,
-      draft: false,
-      prerelease: false,
-      body: `opencode-cco ${version}\n\nInstall:\ncurl -fsSL https://github.com/${REPO}/raw/dev/install-cco | bash`,
-    }),
-  })
-  if (!created.ok) throw new Error(`Create release failed: ${created.status} ${await created.text()}`)
-  release = await created.json()
-}
+type Release = { id: number; assets: { id: number; name: string; size: number }[]; html_url: string; upload_url: string }
 
-const existing = new Set<string>()
-for (const asset of release.assets) existing.add(asset.name)
+const release = await ensureRelease()
+
+const existing = new Map<string, number>()
+for (const asset of release.assets) existing.set(asset.name, asset.size)
 
 console.log("=== uploading assets ===\n")
 let uploaded = 0
 let skipped = 0
 for (const target of targets) {
   const name = assetName(target)
-  if (existing.has(name)) {
+  if (existing.get(name) === Bun.file(path.join(releaseDir, name)).size) {
     skipped++
     console.log(`${name}  already uploaded, skipping`)
     continue
@@ -171,29 +166,88 @@ function binaryPath(target: string) {
   return path.join(dist, name, "bin", target.startsWith("windows") ? "opencode.exe" : "opencode")
 }
 
+async function ensureRelease() {
+  return retry(`release ${tag}`, async () => {
+    const existing = await getRelease()
+    if (existing) return existing
+    const created = await fetch(`${api}/releases`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        tag_name: tag,
+        name: tag,
+        draft: false,
+        prerelease: false,
+        body: `opencode-cco ${version}\n\nInstall:\ncurl -fsSL https://github.com/${REPO}/raw/dev/install-cco | bash`,
+      }),
+      signal: AbortSignal.timeout(60_000),
+    })
+    if (!created.ok) throw new Error(`Create release failed: ${created.status} ${await created.text()}`)
+    return (await created.json()) as Release
+  })
+}
+
 async function getRelease() {
-  const response = await fetch(`${api}/releases/tags/${tag}`, { headers })
+  const response = await fetch(`${api}/releases/tags/${tag}`, { headers, signal: AbortSignal.timeout(60_000) })
   if (response.status === 404) return undefined
   if (!response.ok) throw new Error(`Fetch release failed: ${response.status} ${await response.text()}`)
-  return (await response.json()) as { assets: { name: string }[]; html_url: string; upload_url: string }
+  return (await response.json()) as Release
+}
+
+async function deleteAsset(name: string) {
+  const current = await retry(`locate asset ${name}`, getRelease)
+  if (!current) return
+  for (const asset of current.assets) {
+    if (asset.name !== name) continue
+    await retry(`delete asset ${name}`, async () => {
+      const response = await fetch(`${api}/releases/assets/${asset.id}`, {
+        method: "DELETE",
+        headers,
+        signal: AbortSignal.timeout(60_000),
+      })
+      if (!response.ok && response.status !== 404)
+        throw new Error(`Delete asset failed: ${response.status} ${await response.text()}`)
+    })
+    console.log(`${name}  removed partial asset`)
+  }
 }
 
 async function upload(name: string) {
-  const url = release!.upload_url.replace(/\{.*\}$/, "") + `?name=${encodeURIComponent(name)}`
+  const url = release.upload_url.replace(/\{.*\}$/, "") + `?name=${encodeURIComponent(name)}`
   const file = Bun.file(path.join(releaseDir, name))
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/gzip" },
-      body: file,
-    })
-    if (response.ok) {
-      console.log(`${name}  uploaded`)
-      return
+  let lastError = ""
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    // A previous interrupted attempt can leave a partial asset that blocks re-upload with 422.
+    await deleteAsset(name)
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/gzip" },
+        body: file,
+        signal: AbortSignal.timeout(900_000),
+      })
+      if (response.ok) {
+        console.log(`${name}  uploaded`)
+        return
+      }
+      lastError = `${response.status} ${await response.text()}`
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
     }
-    const detail = await response.text()
-    console.error(`${name}  attempt ${attempt} failed: ${response.status} ${detail}`)
-    if (attempt === 3) throw new Error(`Upload failed for ${name}`)
-    await Bun.sleep(attempt * 3000)
+    console.error(`${name}  attempt ${attempt} failed: ${lastError}`)
+    if (attempt < 6) await Bun.sleep(attempt * 5000)
+  }
+  throw new Error(`Upload failed for ${name}: ${lastError}`)
+}
+
+async function retry<T>(label: string, run: () => Promise<T>, attempts = 5): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run()
+    } catch (error) {
+      if (attempt >= attempts) throw error
+      console.error(`${label} attempt ${attempt} failed: ${error instanceof Error ? error.message : error}`)
+      await Bun.sleep(attempt * 5000)
+    }
   }
 }

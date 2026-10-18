@@ -41,4 +41,4 @@
 - [x] 8.3 新增 `script/release-cco.ts`：校验 12 目标产物 → 打包 `opencode-cco-<target>.tgz` → git tag/push → GitHub API 建 Release（`prerelease:false`）→ 流式上传资产（幂等、重试），凭据走 env `GITHUB_TOKEN`；验证：干跑校验逻辑，正式执行后 Release 含 12 资产且 `releases/latest/download/<asset>` 可下载
 - [x] 8.4 全量构建 12 目标（`OPENCODE_CHANNEL=local OPENCODE_VERSION=2.0.28-cco.1 bun run --cwd packages/cli build --skip-web-ui`）并执行发布（tag `v2.0.28-cco.1`）；验证：`dist/` 含 12 个 `cli-<target>`、抽测 linux-arm64 `--version` 输出 `2.0.28-cco.1` 且身份矩阵仍正确，Release 资产齐全
 - [x] 8.5 重写 `opencode-cco.md` 为四章节（1 改造点 / 2 编译 / 3 安装——重点全新机器 `curl -fsSL https://github.com/wjxwang/opencode-cco/raw/dev/install-cco | bash`，注明必须 `/raw/` 而非 `/blob/`、升级=重跑、`--version`/`--binary` / 4 使用方法——三命令身份、`--version` 自检、服务连接形态、与上游共存）；验证：文档内命令在干净环境实跑通过
-- [ ] 8.6 于仓库根运行 `bun run check`；推送 dev 分支后用真实 raw URL 在干净 HOME 完整 E2E 安装并验证三命令身份；验证：退出码 0，E2E 通过
+- [x] 8.6 于仓库根运行 `bun run check`；推送 dev 分支后用真实 raw URL 在干净 HOME 完整 E2E 安装并验证三命令身份；验证：退出码 0，E2E 通过

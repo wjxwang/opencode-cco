@@ -14,7 +14,8 @@ export namespace Identity {
     argv0: string = process.argv0,
   ) {
     if (env.OPENCODE_IDENTITY === CHATCODE) return true
-    return [argv0, argv[0], argv[1]].some((entry) => path.basename(entry || "") === "opencode-cco")
+    // Windows installs the binary as `opencode-cco.exe`, so the launch name must match without the suffix.
+    return [argv0, argv[0], argv[1]].some((entry) => path.basename(entry || "").replace(/\.exe$/i, "") === "opencode-cco")
   }
 
   export const chatcode = detect()

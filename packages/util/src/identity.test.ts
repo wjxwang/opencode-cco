@@ -33,6 +33,12 @@ describe("Identity.detect", () => {
     expect(Identity.detect({}, ["bun", "/$bunfs/root/opencode", "serve"], "/usr/local/bin/opencode")).toBe(false)
   })
 
+  test("windows executable suffix", () => {
+    expect(Identity.detect({}, ["C:/bin/opencode-cco.exe", "serve"])).toBe(true)
+    expect(Identity.detect({}, ["bun", "/$bunfs/root/opencode.exe", "serve"], "C:/bin/opencode-cco.exe")).toBe(true)
+    expect(Identity.detect({}, ["C:/bin/opencode.exe", "serve"])).toBe(false)
+  })
+
   test("chatcode matches the process predicate", () => {
     expect(Identity.chatcode).toBe(Identity.detect())
   })

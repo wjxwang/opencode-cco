@@ -358,8 +358,12 @@ install_from_binary() {
     case "$(uname -s)" in
         MINGW*|MSYS*|CYGWIN*) installed_binary="$APP.exe" ;;
     esac
-    cp "$binary_path" "$INSTALL_DIR/$installed_binary"
-    chmod 755 "$INSTALL_DIR/$installed_binary"
+    # Stage beside the target and rename over it: opening a running service's executable for
+    # writing fails with ETXTBSY, while rename keeps the old inode alive for that process.
+    local staging="$INSTALL_DIR/.$installed_binary.new.$$"
+    cp "$binary_path" "$staging"
+    chmod 755 "$staging"
+    mv -f "$staging" "$INSTALL_DIR/$installed_binary"
 }
 
 # The default-identity names must resolve to a launch name of `opencode`, so unix

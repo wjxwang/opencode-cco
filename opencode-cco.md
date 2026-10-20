@@ -26,7 +26,42 @@
 - `packages/server` 服务端零改动
 - 默认模式的全部出站头名、注册行为与进程行为与上游完全一致
 
-设计依据见 `openspec/changes/rebrand-llm-identity/design.md`。
+### 文件级差异清单（与原 fork 基线的全部不一致）
+
+fork 基线为 `def5d948ef`（上游 opencode 同步历史的最后一笔提交），其后 8 笔本地提交共 46 个文件与上游不一致，分三类列出。fork 更新升级时，AI 可按本清单逐文件判断哪些属于个性化改动：
+
+**（一）补丁进上游包的运行时源码（12 个文件）**——合并上游更新时这些文件会冲突，解冲突目标是「保留 `Identity.chatcode` 分支 + 吸收上游新改动」共存，勿整体取任一侧：
+
+| 文件 | 作用 |
+| --- | --- |
+| `packages/util/src/identity.ts`、`identity.test.ts`（包内新增） | 身份判定唯一真源 `Identity`：命中 `OPENCODE_IDENTITY=chatcode-cli` 或启动命令名 `opencode-cco`（检查 `argv0`/`argv[0]`/`argv[1]` 的 basename，兼容 `.exe` 后缀；编译产物 `process.argv` 是虚拟路径，调用名仅 `argv0` 可见）即为 chatcode 模式；模块加载时求值一次缓存为 `Identity.chatcode`，下述全部改造点均以它为开关，默认模式不触发 |
+| `packages/cli/src/index.ts` | CLI 入口：chatcode 模式设置 `process.title` 并写 `/proc/self/comm`（使 Linux 进程表显示 `chatcode-cli`，写失败不阻塞启动）；默认模式不动 argv 与进程名 |
+| `packages/cli/src/services/service-config.ts`、`test/service.test.ts` | 后台服务按身份隔离：注册/配置文件名追加 `-cco`（`service[-<channel>]-cco.json`）、chatcode 专用端口 `0xf0de`、跳过全部 legacy 注册迁移、服务子进程 spawn env 注入 `OPENCODE_IDENTITY`（合并在用户 env 之后，`service set env` 无法覆盖） |
+| `packages/core/src/app.ts`、`test/app.test.ts` | `App.useragent()`：chatcode 模式返回字面量 `chatcode-cli/3.0.3 (+https://www.npmjs.com/package/@chatcode/chatcode-cli)`（版本不随本仓库漂移）；默认模式原样返回 `opencode/<channel>/<version>/<client>` |
+| `packages/core/src/generate.ts`、`test/generate.test.ts` | 无状态 generate 归因头 `attributionHeaders()`：chatcode 用 `x-session-affinity`，默认用上游的 `x-opencode-session`（值语义不变） |
+| `packages/core/src/session/model-request.ts`、新增测试 `test/session-outbound-headers.test.ts` | 出站头整形 `outboundHeaders()`：chatcode 只发 `x-session-affinity`/`X-Session-Id`/`User-Agent`/（有父会话时）`x-parent-session-id`，停发全部 `x-opencode-*` 及客户端/项目标识；默认模式头集与上游完全一致 |
+| `packages/cli/package.json` | `bin` 表新增 `opencode-cco` 条目（指向 `bin/opencode-cco.cjs`） |
+
+**（二）纯新增文件（4 个）**——上游没有对应文件，升级合并不会冲突，直接保留：
+
+| 文件 | 作用 |
+| --- | --- |
+| `packages/cli/bin/opencode-cco.cjs` | npm 包装入口（Node）：`process.title = "chatcode-cli"` 并注入 `OPENCODE_IDENTITY=chatcode-cli` 后加载 `opencode.cjs`，服务子进程经 env 继承身份 |
+| `install-cco`（仓库根） | 一键安装/升级脚本：12 目标检测（OS/arch/AVX2/musl）、GitHub Release 下载、`~/.opencode-cco/bin` 装配三命令、rc 文件 PATH 去重写入 |
+| `script/release-cco.ts` | 发布脚本：构建 → 12 平台打包 tgz → git tag → GitHub Release → 流式上传（支持 `--skip-build`/`--dry-run`） |
+| `opencode-cco.md`（仓库根） | 本使用手册 |
+
+**（三）openspec 设计记录与 agent 工具（30 个文件）**——不影响产品运行时，升级时保留即可：
+
+| 路径 | 作用 |
+| --- | --- |
+| `openspec/` | 行为规格与改造记录：`config.yaml`、主规格 `specs/cli/product-identity/spec.md`（升级后可用 `openspec validate --specs` 校验行为契约）、`changes/archive/2026-10-19-rebrand-llm-identity/`（proposal/design/tasks，其中 `design.md` 为设计依据） |
+| `.opencode/commands/opsx-*`、`.opencode/skills/openspec-*`、`.agents/skills/openspec-*` | openspec 工作流的斜杠命令与技能文件（仅供 agent 使用） |
+| `.opencode/tool/` | 删除 `github-pr-search.ts`、`github-triage.ts`（改留 `github-triage.ts.bak`），agent 工具脚本清理 |
+
+**升级合并指引**：清单之外的文件（含 `packages/server`）与上游一致，可直接快进合并；（一）表逐文件冲突解决且必须保留身份开关（默认模式运行时本就走上游路径，两模式天然共存）；（二）（三）表为本地独有内容，上游更新不含对应改动。
+
+设计依据见 `openspec/changes/archive/2026-10-19-rebrand-llm-identity/design.md`。
 
 ## 2. 编译
 

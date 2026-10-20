@@ -74,6 +74,20 @@ test("chatcode identity gets its own registration file and port", () => {
   ])
 })
 
+test("managed service spawn inherits the launching identity", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-service-identity-"))
+  const layer = Global.layerWith({ config: path.join(root, "config"), state: path.join(root, "state") })
+  const run = <A, E>(effect: Effect.Effect<A, E, Global.Service | FileSystem.FileSystem>) =>
+    Effect.runPromise(effect.pipe(Effect.provide(layer), Effect.provide(NodeFileSystem.layer)))
+  try {
+    // The service child is spawned through the installed binary's real path, so its launch
+    // name cannot carry the client identity; the env has to do it for the default mode too.
+    expect((await run(ServiceConfig.options())).env?.OPENCODE_IDENTITY).toBe("opencode")
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
 test("service disabled accepts only booleans without changing configuration on invalid input", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-service-disabled-config-"))
   const layer = Global.layerWith({ config: path.join(root, "config"), state: path.join(root, "state") })
@@ -211,7 +225,7 @@ test("service config manages environment variables", async () => {
           ServiceConfig.options().pipe(Effect.provide(layer), Effect.provide(NodeFileSystem.layer)),
         )
       ).env,
-    ).toEqual({ OPENCODE_SERVICE_ENV_TEST: "configured" })
+    ).toEqual({ OPENCODE_SERVICE_ENV_TEST: "configured", OPENCODE_IDENTITY: "opencode" })
 
     await Effect.runPromise(
       ServiceConfig.unset("env", "OPENCODE_SERVICE_ENV_TEST").pipe(

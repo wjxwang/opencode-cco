@@ -1,5 +1,6 @@
 import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
 import { LayerNode } from "@opencode/util/effect/layer-node"
+import { Identity } from "@opencode/util/identity"
 import { Deferred, Effect, Schema, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { randomBytes } from "node:crypto"
@@ -21,7 +22,12 @@ function command(password: string, options: Options) {
     cwd: startupDirectory,
     // Explicit entry wins over anything inherited, so a user-exported
     // OPENCODE_PASSWORD cannot shadow the child's lease credential.
-    env: { OPENCODE_PASSWORD: password },
+    env: {
+      OPENCODE_PASSWORD: password,
+      // The child runs the installed binary's real path, whose launch name would otherwise
+      // select chatcode mode; keep the server identity aligned with this client.
+      OPENCODE_IDENTITY: Identity.chatcode ? Identity.CHATCODE : Identity.OPENCODE,
+    },
     extendEnv: true,
     // The server treats EOF on this pipe as the end of its ownership lease.
     // The OS closes it even when the TUI is killed before Effect finalizers run.

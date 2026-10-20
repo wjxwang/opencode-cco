@@ -4,10 +4,12 @@
 
 ## 1. 改造点
 
-身份判定（进程内一次求值，两条件任一命中即为 chatcode 模式）：
+身份判定（进程内一次求值）：
 
-1. 环境变量 `OPENCODE_IDENTITY=chatcode-cli`
-2. 启动命令文件名为 `opencode-cco`（编译产物经 `process.argv0` 识别调用名，兼容 `.exe` 后缀；源码 `bun` 方式经符号链接启动时解析真实路径，请用环境变量）
+1. 环境变量 `OPENCODE_IDENTITY` 已设置时以其为准：`chatcode-cli` 为 chatcode 模式，其它值（如 `opencode`）为默认模式
+2. 未设置时看启动命令文件名：`opencode-cco` 即 chatcode 模式（编译产物经 `process.argv0` 识别调用名，兼容 `.exe` 后缀；源码 `bun` 方式经符号链接启动时解析真实路径，请用环境变量）
+
+> 后台服务与 `--standalone` 的 server 子进程都是用 `process.execPath`（安装后的真实文件名 `opencode-cco`）启动的，因此 spawn 时必须显式注入当前身份的 `OPENCODE_IDENTITY`，不能依赖子进程的启动文件名。
 
 | 维度 | 默认模式（`opencode`/`opencode2`） | chatcode 模式（`opencode-cco`） |
 | --- | --- | --- |
@@ -15,7 +17,7 @@
 | 进程名 | 保持二进制/启动命令默认名 | Linux 下进程表（`top`/`htop`/`ps -o comm`）显示 `chatcode-cli`；`opencode-cco` 包装脚本（Node）在 `ps aux` 中亦显示 `chatcode-cli`。macOS/Windows 无 `/proc`，Bun 子进程进程名不可改 |
 | 出站 LLM 请求头 | `x-opencode-session-id`、`x-opencode-session`、`x-opencode-client`、`x-opencode-project` 等全部原头名，与上游一致 | 停发全部 `x-opencode-*`；session 归因仅由中性头 `x-session-affinity` / `X-Session-Id` / `x-parent-session-id` 承担；产品身份仅由 `User-Agent` 承载，客户端标识头与项目头不出站（`OPENCODE_CLIENT` 取值不出站） |
 | 无状态 generate 归因头 | `x-opencode-session` | `x-session-affinity`（值语义不变） |
-| 后台服务 | 注册文件与端口沿用上游命名；legacy 迁移行为不变 | 独立注册文件 `service[-<channel>]-cco.json`、独立端口 `0xf0de`；跳过全部 legacy 注册/配置迁移；仅经 argv 启动时拉起的服务子进程经 spawn env 继承 chatcode 身份 |
+| 后台服务 | 注册文件与端口沿用上游命名；legacy 迁移行为不变 | 独立注册文件 `service[-<channel>]-cco.json`、独立端口 `0xf0de`；跳过全部 legacy 注册/配置迁移；客户端拉起的服务子进程一律经 spawn env 显式继承当前身份（默认模式传 `opencode`，chatcode 模式传 `chatcode-cli`），不依赖子进程启动文件名 |
 | 启动入口 | `opencode` / `opencode2`（均保留不变） | 新增 `opencode-cco` bin（`packages/cli/bin/opencode-cco.cjs`）与 `install-cco` 安装出的 `opencode-cco` 真身 |
 
 **明确保留（两种模式均不变）**：
@@ -34,9 +36,10 @@ fork 基线为 `def5d948ef`（上游 opencode 同步历史的最后一笔提交�
 
 | 文件 | 作用 |
 | --- | --- |
-| `packages/util/src/identity.ts`、`identity.test.ts`（包内新增） | 身份判定唯一真源 `Identity`：命中 `OPENCODE_IDENTITY=chatcode-cli` 或启动命令名 `opencode-cco`（检查 `argv0`/`argv[0]`/`argv[1]` 的 basename，兼容 `.exe` 后缀；编译产物 `process.argv` 是虚拟路径，调用名仅 `argv0` 可见）即为 chatcode 模式；模块加载时求值一次缓存为 `Identity.chatcode`，下述全部改造点均以它为开关，默认模式不触发 |
+| `packages/util/src/identity.ts`、`identity.test.ts`（包内新增） | 身份判定唯一真源 `Identity`：`OPENCODE_IDENTITY` 已设置时以其为准（`chatcode-cli` 即 chatcode 模式，其它值为默认模式），未设置时看启动命令名 `opencode-cco`（检查 `argv0`/`argv[0]`/`argv[1]` 的 basename，兼容 `.exe` 后缀；编译产物 `process.argv` 是虚拟路径，调用名仅 `argv0` 可见）即为 chatcode 模式；模块加载时求值一次缓存为 `Identity.chatcode`，下述全部改造点均以它为开关，默认模式不触发 |
 | `packages/cli/src/index.ts` | CLI 入口：chatcode 模式设置 `process.title` 并写 `/proc/self/comm`（使 Linux 进程表显示 `chatcode-cli`，写失败不阻塞启动）；默认模式不动 argv 与进程名 |
-| `packages/cli/src/services/service-config.ts`、`test/service.test.ts` | 后台服务按身份隔离：注册/配置文件名追加 `-cco`（`service[-<channel>]-cco.json`）、chatcode 专用端口 `0xf0de`、跳过全部 legacy 注册迁移、服务子进程 spawn env 注入 `OPENCODE_IDENTITY`（合并在用户 env 之后，`service set env` 无法覆盖） |
+| `packages/cli/src/services/service-config.ts`、`test/service.test.ts` | 后台服务按身份隔离：注册/配置文件名追加 `-cco`（`service[-<channel>]-cco.json`）、chatcode 专用端口 `0xf0de`、跳过全部 legacy 注册迁移、服务子进程 spawn env 按当前身份注入 `OPENCODE_IDENTITY`（默认模式 `opencode`、chatcode 模式 `chatcode-cli`；合并在用户 env 之后，`service set env` 无法覆盖）。子进程经 `process.execPath` 启动，真实文件名恒为 `opencode-cco`，故不能依赖启动名判定 |
+| `packages/cli/src/services/standalone.ts` | `--standalone` 私有 server 子进程同样按当前身份注入 `OPENCODE_IDENTITY`，默认模式不会被真实文件名带成 chatcode 身份 |
 | `packages/core/src/app.ts`、`test/app.test.ts` | `App.useragent()`：chatcode 模式返回字面量 `chatcode-cli/3.0.3 (+https://www.npmjs.com/package/@chatcode/chatcode-cli)`（版本不随本仓库漂移）；默认模式原样返回 `opencode/<channel>/<version>/<client>` |
 | `packages/core/src/generate.ts`、`test/generate.test.ts` | 无状态 generate 归因头 `attributionHeaders()`：chatcode 用 `x-session-affinity`，默认用上游的 `x-opencode-session`（值语义不变） |
 | `packages/core/src/session/model-request.ts`、新增测试 `test/session-outbound-headers.test.ts` | 出站头整形 `outboundHeaders()`：chatcode 只发 `x-session-affinity`/`X-Session-Id`/`User-Agent`/（有父会话时）`x-parent-session-id`，停发全部 `x-opencode-*` 及客户端/项目标识；默认模式头集与上游完全一致 |

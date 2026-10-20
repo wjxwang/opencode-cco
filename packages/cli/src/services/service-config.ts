@@ -145,13 +145,20 @@ export const options = Effect.fnUntraced(function* (input: { readonly checkVersi
   const { file, legacyRegistrationFiles } = yield* paths
   yield* Effect.forEach(legacyRegistrationFiles, (legacy) => migrateRegistration(legacy, file))
   const env = (yield* read()).env
+  // A chatcode client started only via argv (opencode-cco symlink) has no OPENCODE_IDENTITY in
+  // process.env; carry the identity in the spawn env so the service child inherits it. The
+  // default mode needs the same treatment: the child is spawned through the installed binary's
+  // real path (`opencode-cco`), so without an explicit value its launch name would select
+  // chatcode mode and it would register a service this client never discovers.
+  // Merged after user env so `service set env` cannot shadow it.
+  const spawnEnv: Record<string, string> = {
+    ...env,
+    OPENCODE_IDENTITY: Identity.chatcode ? Identity.CHATCODE : Identity.OPENCODE,
+  }
   return {
     file,
     version: input.checkVersion ? OPENCODE_VERSION : undefined,
-    // A chatcode client started only via argv (opencode-cco symlink) has no OPENCODE_IDENTITY in
-    // process.env; carry it in the spawn env so the service child inherits the identity. Merged
-    // after user env so `service set env` cannot shadow it.
-    env: Identity.chatcode ? { ...env, OPENCODE_IDENTITY: Identity.CHATCODE } : env,
+    env: spawnEnv,
     command: [
       ...selfCommand(),
       "serve",

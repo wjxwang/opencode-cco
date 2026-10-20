@@ -10,6 +10,17 @@ describe("Identity.detect", () => {
     expect(Identity.detect({ OPENCODE_IDENTITY: "opencode" }, ["node", "/repo/index.ts"])).toBe(false)
   })
 
+  test("explicit env identity wins over the launch name", () => {
+    // A default-mode client spawns its server through the installed binary's real path
+    // (`opencode-cco`), so the launch name alone would flip the child to chatcode mode.
+    expect(
+      Identity.detect({ OPENCODE_IDENTITY: "opencode" }, ["/$bunfs/root/opencode", "serve"], "/usr/local/bin/opencode-cco"),
+    ).toBe(false)
+    expect(
+      Identity.detect({ OPENCODE_IDENTITY: "chatcode-cli" }, ["/$bunfs/root/opencode", "serve"], "/usr/local/bin/opencode"),
+    ).toBe(true)
+  })
+
   test("compiled binary launch name from argv[0]", () => {
     expect(Identity.detect({}, ["/usr/local/bin/opencode-cco", "serve"])).toBe(true)
   })

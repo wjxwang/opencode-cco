@@ -260,7 +260,7 @@ test("saved service environment cannot move the registration's state directory",
     const options = await Effect.runPromise(
       ServiceConfig.options().pipe(Effect.provide(layer), Effect.provide(NodeFileSystem.layer)),
     )
-    expect(options.env).toEqual({ A: "1" })
+    expect(options.env).toEqual({ A: "1", OPENCODE_IDENTITY: "opencode" })
     expect(options.file).toBe(path.join(root, "state", ServiceConfig.filename()))
   } finally {
     await fs.rm(root, { recursive: true, force: true })
